@@ -49,4 +49,57 @@ print("\n===== SESSIONS BY CONVERSION STATUS =====")
 
 sessions.groupBy("conversion_status").count().show()
 
+from pyspark.sql.functions import size, array_distinct, sort_array, collect_set
+
+print("\n===== DATA CLEANING AND NORMALIZATION =====")
+
+clean_transactions = (
+    transactions
+    .dropna(subset=["transaction_id", "user_id"])
+    .dropDuplicates(["transaction_id"])
+    .filter(col("items").isNotNull())
+    .filter(size(col("items")) > 0)
+)
+
+print("Clean transactions:", clean_transactions.count())
+
+print("\n===== PRODUCT AFFINITY ANALYSIS =====")
+
+# Extract distinct products purchased in each transaction.
+purchase_items = (
+    clean_transactions
+    .select(
+        "transaction_id",
+        explode("items").alias("item")
+    )
+    .select(
+        "transaction_id",
+        col("item.product_id").alias("product_id")
+    )
+    .dropna(subset=["product_id"])
+    .dropDuplicates(["transaction_id", "product_id"])
+)
+
+# Match products purchased together in the same transaction.
+left_items = purchase_items.alias("a")
+right_items = purchase_items.alias("b")
+
+product_pairs = (
+    left_items.join(
+        right_items,
+        (col("a.transaction_id") == col("b.transaction_id"))
+        & (col("a.product_id") < col("b.product_id"))
+    )
+    .groupBy(
+        col("a.product_id").alias("product_a"),
+        col("b.product_id").alias("product_b")
+    )
+    .agg(
+        count("*").alias("times_bought_together")
+    )
+    .orderBy(col("times_bought_together").desc())
+)
+
+product_pairs.show(10, truncate=False)
+
 spark.stop()
